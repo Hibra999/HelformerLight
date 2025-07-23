@@ -12,7 +12,7 @@ SYMBOL = 'ETH/USDT'  # o 'SOL/USDT'
 
 # 1. Obtener datos
 print("1. Fetching data...")
-data = scrape_candles_to_dataframe('binance', 3, SYMBOL, '1h', '2025-03-01T00:00:00Z', 1000)
+data = scrape_candles_to_dataframe('binance', 3, SYMBOL, '1h', '2024-03-01T00:00:00Z', 1000)
 print(f"Total data: {len(data)}")
 
 # 2. Crear features

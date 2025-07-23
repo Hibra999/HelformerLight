@@ -658,12 +658,10 @@ class ForecasterDualModel:
         train_meta_features = np.column_stack(train_preds)
         val_meta_features = np.column_stack(val_preds)
         
-        # Agregar características originales importantes (top features)
-        n_top_features = min(20, len(self.feature_names))  # Máximo 20 features
-        top_features_idx = self.models['lightgbm'].feature_importances_.argsort()[-n_top_features:][::-1]
-        train_meta_features = np.hstack([train_meta_features, X_train[:, top_features_idx]])
-        val_meta_features = np.hstack([val_meta_features, X_val[:, top_features_idx]])
-        
+        # MODIFICACIÓN: Usar TODOS los features en lugar de solo los top
+        train_meta_features = np.hstack([train_meta_features, X_train])
+        val_meta_features = np.hstack([val_meta_features, X_val])
+                
         # Construir meta-learner
         input_dim = train_meta_features.shape[1]
         
@@ -738,10 +736,8 @@ class ForecasterDualModel:
             # Preparar features para meta-learner
             pred_matrix = np.column_stack([predictions['lightgbm'], predictions['helformer']])
             
-            # Agregar top features
-            n_top_features = min(20, len(self.feature_names))
-            top_features_idx = self.models['lightgbm'].feature_importances_.argsort()[-n_top_features:][::-1]
-            meta_features = np.hstack([pred_matrix, X_test_scaled[:, top_features_idx]])
+            # MODIFICACIÓN: Usar TODOS los features
+            meta_features = np.hstack([pred_matrix, X_test_scaled])
             
             ensemble_pred = self.meta_learner.predict(meta_features, verbose=0).ravel()
         else:   
