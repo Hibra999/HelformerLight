@@ -8,7 +8,7 @@ warnings.filterwarnings("ignore")
 
 # Configuración
 OPTIMIZE_HYPERPARAMS = False  
-SYMBOL = 'BTC/USDT'  # o 'SOL/USDT'
+SYMBOL = 'ETH/USDT'  # o 'SOL/USDT'
 
 # 1. Obtener datos
 print("1. Fetching data...")
