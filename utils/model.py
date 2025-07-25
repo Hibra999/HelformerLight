@@ -580,8 +580,8 @@ class ForecasterDualModel:
             ]
             
             # Entrenar
-            epochs = 50
-            batch_size = self.helformer_best_params.get('batch_size', 64) if self.helformer_best_params else 64
+            epochs = 5
+            batch_size = self.helformer_best_params.get('batch_size', 32) if self.helformer_best_params else 32
             
             history = self.models['helformer'].fit(
                 X_train_seq, y_train_seq,
