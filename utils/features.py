@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from stock_indicators.indicators.common.enums import PeriodSize, PivotPointType
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -1204,13 +1205,415 @@ def create_robust_features(data):
                 print(f"pandas-ta XSIGNALS failed: {e}")
         except Exception as e:
             print(f"Signal indicators section failed: {e}")
+        
+    # Only add indicators not covered by TA-Lib or pandas-ta, using optimized libraries where possible
+    print("\nAdding optimized manual indicators...")
     
-    # ==================== CUSTOM MANUAL INDICATORS (NON-DUPLICATES) ====================
+    # Try to import additional optimized libraries
+    try:
+        from finta import TA as finta_TA
+        finta_available = True
+        print("FINTA available - using optimized implementations for VWAP, FRAMA, Pivot Points")
+    except ImportError:
+        print("Warning: FINTA not available. Using manual implementations.")
+        finta_available = False
     
-    # Only add indicators not covered by TA-Lib or pandas-ta
-    print("\nAdding custom manual indicators...")
+    try:
+        from stock_indicators import indicators as stock_ind
+        from stock_indicators.indicators.common.quote import Quote
+        stock_indicators_available = True
+        print("stock-indicators available - using optimized Hurst Exponent")
+    except ImportError:
+        print("Warning: stock-indicators not available. Using manual Hurst implementation.")
+        stock_indicators_available = False
     
-    # Custom Price Statistics
+    # ==================== CORRECTED FINTA INDICATORS ====================
+    if finta_available:
+        print("\nAdding ALL FINTA indicators (excluding duplicates)...")
+        
+        # Prepare data for FINTA (requires lowercase column names)
+        finta_df = df[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
+        finta_df.columns = ['open', 'high', 'low', 'close', 'volume']
+        
+        # Dictionary to track which indicators to skip (already in TA-Lib or pandas-ta)
+        skip_indicators = {
+            'ADX', 'ATR', 'BBANDS', 'BOP', 'CCI', 'CMO', 'DEMA', 'DMI', 
+            'EMA', 'MACD', 'MFI', 'MOM', 'OBV', 'PPO', 'ROC', 'RSI', 
+            'SAR', 'SMA', 'STOCH', 'STOCHD', 'TEMA', 'TRIX', 'UO', 
+            'WILLIAMS', 'WMA'  # These are duplicates
+        }
+        
+        # 1. Fixed FINTA indicators with correct parameters based on actual API
+        finta_indicators = {
+            # Accumulation/Distribution indicators
+            'ADL': lambda: finta_TA.ADL(finta_df),
+            'SMMA': lambda: finta_TA.SMMA(finta_df, period=14),
+            'SSMA': lambda: finta_TA.SSMA(finta_df, period=10),
+            'VAMA': lambda: finta_TA.VAMA(finta_df, period=8),
+            'ZLEMA': lambda: finta_TA.ZLEMA(finta_df, period=21),
+            'HMA': lambda: finta_TA.HMA(finta_df, period=16),
+            'FRAMA': lambda: finta_TA.FRAMA(finta_df, period=10),
+            'TRIMA': lambda: finta_TA.TRIMA(finta_df, period=20),
+            
+            # Oscillators - using correct function signatures
+            'AO': lambda: finta_TA.AO(finta_df),
+            'APZ': lambda: finta_TA.APZ(finta_df, period=21),
+            'CFI': lambda: finta_TA.CFI(finta_df),  # No period parameter
+            'COPP': lambda: finta_TA.COPP(finta_df),  # No period parameter
+            'ER': lambda: finta_TA.ER(finta_df, period=14),
+            'FISH': lambda: finta_TA.FISH(finta_df, period=10),
+            'IFT_RSI': lambda: finta_TA.IFT_RSI(finta_df),  # No period parameter
+            'KST': lambda: finta_TA.KST(finta_df),
+            'MI': lambda: finta_TA.MI(finta_df, period=9),
+            'PZO': lambda: finta_TA.PZO(finta_df, period=14),
+            'QSTICK': lambda: finta_TA.QSTICK(finta_df, period=14),
+            'SMM': lambda: finta_TA.SMM(finta_df, period=9),
+            'STC': lambda: finta_TA.STC(finta_df),  # No period parameter
+            'TSI': lambda: finta_TA.TSI(finta_df),  # No period parameter
+            'VZO': lambda: finta_TA.VZO(finta_df, period=14),
+            
+            # Volume indicators - corrected parameters  
+            'CHAIKIN': lambda: finta_TA.CHAIKIN(finta_df),
+            'EFI': lambda: finta_TA.EFI(finta_df, period=13),
+            'EMV': lambda: finta_TA.EMV(finta_df, period=14),
+            'FVE': lambda: finta_TA.FVE(finta_df, period=22),
+            'VBM': lambda: finta_TA.VBM(finta_df),
+            'VFI': lambda: finta_TA.VFI(finta_df, period=130),
+            'VPT': lambda: finta_TA.VPT(finta_df),
+            'VWAP': lambda: finta_TA.VWAP(finta_df),
+            
+            # Volatility indicators - corrected parameters
+            'BBWIDTH': lambda: finta_TA.BBWIDTH(finta_df, period=20),
+            'CHANDELIER': lambda: finta_TA.CHANDELIER(finta_df),  # No long/short parameters
+            'DO': lambda: finta_TA.DO(finta_df),  # No period parameter
+            'KC': lambda: finta_TA.KC(finta_df, period=20),
+            'MOBO': lambda: finta_TA.MOBO(finta_df, period=10),
+            'PERCENT_B': lambda: finta_TA.PERCENT_B(finta_df, period=20),
+            
+            # Other unique indicators - corrected parameters
+            'BASP': lambda: finta_TA.BASP(finta_df, period=40),
+            'BASPN': lambda: finta_TA.BASPN(finta_df, period=40),
+            'EBBP': lambda: finta_TA.EBBP(finta_df),  # No period parameter
+            'ICHIMOKU': lambda: finta_TA.ICHIMOKU(finta_df),
+            'MSD': lambda: finta_TA.MSD(finta_df, period=20),
+            'PIVOT': lambda: finta_TA.PIVOT(finta_df),
+            'PIVOT_FIB': lambda: finta_TA.PIVOT_FIB(finta_df),
+            'PSAR': lambda: finta_TA.PSAR(finta_df),
+            'SQZMI': lambda: finta_TA.SQZMI(finta_df, period=20),
+            'STOCHRSI': lambda: finta_TA.STOCHRSI(finta_df),  # No period parameter
+            'TP': lambda: finta_TA.TP(finta_df),
+            'TR': lambda: finta_TA.TR(finta_df),
+            'VORTEX': lambda: finta_TA.VORTEX(finta_df, period=14),
+            'WILLIAMS_FRACTAL': lambda: finta_TA.WILLIAMS_FRACTAL(finta_df),
+        }
+        
+        # Process each indicator with better error handling
+        for name, func in finta_indicators.items():
+            if name in skip_indicators:
+                continue
+                
+            try:
+                result = func()
+                
+                # Handle different result types
+                if isinstance(result, pd.DataFrame):
+                    # Multi-column output (like ICHIMOKU, PIVOT, etc.)
+                    for col in result.columns:
+                        df[f'finta_{name}_{col}'] = result[col].values
+                elif isinstance(result, pd.Series):
+                    # Single column output - handle length mismatch
+                    if len(result) == len(df):
+                        df[f'finta_{name}'] = result.values
+                    else:
+                        # Pad with NaN if length mismatch
+                        padded_result = np.full(len(df), np.nan)
+                        min_len = min(len(result), len(df))
+                        padded_result[-min_len:] = result.values[-min_len:]
+                        df[f'finta_{name}'] = padded_result
+                else:
+                    # Handle other types
+                    df[f'finta_{name}'] = result
+                    
+            except Exception as e:
+                print(f"FINTA {name} failed: {e}")
+        
+        print(f"✓ Added {sum(1 for col in df.columns if 'finta_' in col)} FINTA indicators")
+
+    # ==================== CORRECTED STOCK_INDICATORS ====================
+    if stock_indicators_available:
+        print("\nAdding ALL stock_indicators (excluding duplicates)...")
+        
+        # Add missing imports
+        try:
+            from stock_indicators.indicators.common.enums import PeriodSize, PivotPointType
+        except ImportError:
+            print("Warning: PeriodSize and PivotPointType enums not available")
+            PeriodSize = None
+            PivotPointType = None
+        
+        # Convert DataFrame to Quote objects
+        quotes = []
+        for idx, row in df.iterrows():
+            quote = Quote(
+                date=idx if isinstance(idx, pd.Timestamp) else pd.Timestamp.now(),
+                open=float(row['Open']),
+                high=float(row['High']),
+                low=float(row['Low']),
+                close=float(row['Close']),
+                volume=float(row['Volume'])
+            )
+            quotes.append(quote)
+        
+        # Skip indicators already in TA-Lib or pandas-ta
+        skip_stock_indicators = {
+            'get_adl', 'get_adx', 'get_atr', 'get_beta', 'get_bollinger_bands',
+            'get_cci', 'get_chaikin_osc', 'get_cmo', 'get_correlation', 'get_dema',
+            'get_ema', 'get_macd', 'get_mfi', 'get_obv', 'get_parabolic_sar',
+            'get_roc', 'get_rsi', 'get_sma', 'get_stoch', 'get_tema', 'get_trix',
+            'get_williams_r', 'get_wma'
+        }
+        
+        # Helper function to try different parameter combinations for problematic indicators
+        def try_fractal_params(quotes):
+            """Try different parameter combinations for fractal indicator"""
+            try:
+                return stock_ind.get_fractal(quotes)
+            except:
+                try:
+                    return stock_ind.get_fractal(quotes, window_span=2)
+                except:
+                    try:
+                        return stock_ind.get_fractal(quotes, span=2)
+                    except:
+                        try:
+                            return stock_ind.get_fractal(quotes, periods=2)
+                        except:
+                            return None
+        
+        # Corrected stock_indicators configurations
+        stock_indicator_configs = [
+            # Trend indicators - corrected parameters
+            ('alligator', lambda: stock_ind.get_alligator(quotes)),
+            ('alma', lambda: stock_ind.get_alma(quotes, lookback_periods=10)),
+            ('chandelier', lambda: stock_ind.get_chandelier(quotes, lookback_periods=22)),
+            ('hma', lambda: stock_ind.get_hma(quotes, lookback_periods=14)),
+            ('kama', lambda: stock_ind.get_kama(quotes, er_periods=10, fast_periods=2, slow_periods=30)),  # Fixed parameters
+            ('mama', lambda: stock_ind.get_mama(quotes)),
+            ('super_trend', lambda: stock_ind.get_super_trend(quotes, lookback_periods=10, multiplier=3)),
+            ('t3', lambda: stock_ind.get_t3(quotes, lookback_periods=5)),
+            ('zig_zag', lambda: stock_ind.get_zig_zag(quotes, percent_change=5)),
+            
+            # Momentum indicators - corrected parameters
+            ('awesome', lambda: stock_ind.get_awesome(quotes)),
+            ('chop', lambda: stock_ind.get_chop(quotes, lookback_periods=14)),
+            ('connors_rsi', lambda: stock_ind.get_connors_rsi(quotes, rsi_periods=3, streak_periods=2, rank_periods=100)),
+            ('elder_ray', lambda: stock_ind.get_elder_ray(quotes, lookback_periods=13)),
+            ('fisher_transform', lambda: stock_ind.get_fisher_transform(quotes, lookback_periods=10)),
+            ('force_index', lambda: stock_ind.get_force_index(quotes, lookback_periods=13)),
+            ('kvo', lambda: stock_ind.get_kvo(quotes, fast_periods=34, slow_periods=55)),
+            ('pmo', lambda: stock_ind.get_pmo(quotes, time_periods=35, smooth_periods=20)),  # Fixed parameter name
+            ('pvo', lambda: stock_ind.get_pvo(quotes, fast_periods=12, slow_periods=26)),
+            ('smi', lambda: stock_ind.get_smi(quotes, lookback_periods=13, first_smooth_periods=25, second_smooth_periods=2)),
+            ('stc', lambda: stock_ind.get_stc(quotes, cycle_periods=10, fast_periods=23, slow_periods=50)),
+            ('tsi', lambda: stock_ind.get_tsi(quotes, lookback_periods=25, smooth_periods=13)),
+            ('ultimate', lambda: stock_ind.get_ultimate(quotes)),
+            
+            # Volume indicators
+            ('cmf', lambda: stock_ind.get_cmf(quotes, lookback_periods=20)),
+            ('vwap', lambda: stock_ind.get_vwap(quotes)),
+            ('vwma', lambda: stock_ind.get_vwma(quotes, lookback_periods=10)),
+            
+            # Volatility indicators
+            ('atr_stop', lambda: stock_ind.get_atr_stop(quotes, lookback_periods=21, multiplier=3)),
+            ('donchian', lambda: stock_ind.get_donchian(quotes, lookback_periods=20)),
+            ('fcb', lambda: stock_ind.get_fcb(quotes, window_span=2)),
+            ('keltner', lambda: stock_ind.get_keltner(quotes, ema_periods=20, multiplier=2)),
+            ('starc_bands', lambda: stock_ind.get_starc_bands(quotes, sma_periods=20, multiplier=2)),
+            ('volatility_stop', lambda: stock_ind.get_volatility_stop(quotes, lookback_periods=20, multiplier=3)),
+            
+            # Price indicators - corrected
+            ('rolling_pivots',  lambda: stock_ind.get_rolling_pivots(quotes, 11, 0) if PeriodSize else None)
+            
+            # Pattern recognition - with fallback parameter attempts
+            ('doji', lambda: stock_ind.get_doji(quotes, max_price_change_percent=0.1)),
+            ('fractal', lambda: try_fractal_params(quotes)),  # Custom function to try different parameters
+            ('marubozu', lambda: stock_ind.get_marubozu(quotes, min_body_percent=95)),
+            
+            # Other unique indicators
+            ('hurst', lambda: stock_ind.get_hurst(quotes, lookback_periods=100)),
+            ('gator', lambda: stock_ind.get_gator(quotes)),
+            ('ichimoku', lambda: stock_ind.get_ichimoku(quotes)),
+            ('slope', lambda: stock_ind.get_slope(quotes, lookback_periods=20)),
+            ('stdev_channels', lambda: stock_ind.get_stdev_channels(quotes, lookback_periods=20)),
+        ]
+        
+        # Process each indicator with better error handling
+        for name, func in stock_indicator_configs:
+            try:
+                if func is None:  # Skip if dependencies not available
+                    continue
+                    
+                results = func()
+                
+                # Extract relevant fields from results
+                if results and len(results) > 0:
+                    # Get all attributes from the first result object
+                    sample = results[0]
+                    attributes = [attr for attr in dir(sample) if not attr.startswith('_') and attr != 'date']
+                    
+                    # Extract each attribute as a column
+                    for attr in attributes:
+                        values = []
+                        for r in results:
+                            val = getattr(r, attr, None)
+                            values.append(val if val is not None else np.nan)
+                        
+                        # Handle length mismatch
+                        if len(values) != len(df):
+                            padded_values = np.full(len(df), np.nan)
+                            min_len = min(len(values), len(df))
+                            padded_values[-min_len:] = values[-min_len:]
+                            values = padded_values
+                        
+                        # Only add if we have valid data
+                        if any(v is not None and not (isinstance(v, float) and np.isnan(v)) for v in values):
+                            df[f'si_{name}_{attr}'] = values
+                            
+            except Exception as e:
+                print(f"stock_indicators {name} failed: {e}")
+        
+        print(f"✓ Added {sum(1 for col in df.columns if 'si_' in col)} stock_indicators features")
+
+    # ==================== CORRECTED FINTA PARAMETER VARIATIONS ====================
+    if finta_available:
+        print("\nAdding FINTA indicators with multiple parameter variations...")
+        
+        # Only include indicators that actually accept period parameters
+        param_variations = {
+            'ER': [5, 10, 20, 30],
+            'FISH': [5, 9, 14, 20],
+            'PZO': [7, 14, 21],
+            'QSTICK': [7, 14, 21, 28],
+            'SMMA': [10, 20, 50],
+            'SSMA': [5, 10, 20],
+            'VAMA': [8, 16, 24],
+            'VZO': [7, 14, 21, 28],
+            'ZLEMA': [10, 21, 34],
+            'HMA': [9, 16, 21],
+            'FRAMA': [5, 10, 20],
+            'TRIMA': [10, 20, 30],
+        }
+        
+        for indicator, params in param_variations.items():
+            for period in params:
+                try:
+                    result = getattr(finta_TA, indicator)(finta_df, period=period)
+                    
+                    # Handle length mismatch
+                    if len(result) == len(df):
+                        df[f'finta_{indicator}_{period}'] = result.values
+                    else:
+                        padded_result = np.full(len(df), np.nan)
+                        min_len = min(len(result), len(df))
+                        padded_result[-min_len:] = result.values[-min_len:]
+                        df[f'finta_{indicator}_{period}'] = padded_result
+                        
+                except Exception as e:
+                    print(f"FINTA {indicator}({period}) failed: {e}")
+        
+        # Add specific multi-parameter variations for indicators that support them
+        try:
+            # EMV with different periods
+            for period in [9, 14, 21]:
+                result = finta_TA.EMV(finta_df, period=period)
+                if len(result) == len(df):
+                    df[f'finta_EMV_{period}'] = result.values
+                else:
+                    padded_result = np.full(len(df), np.nan)
+                    min_len = min(len(result), len(df))
+                    padded_result[-min_len:] = result.values[-min_len:]
+                    df[f'finta_EMV_{period}'] = padded_result
+        except Exception as e:
+            print(f"FINTA EMV variations failed: {e}")
+        
+        try:
+            # EFI with different periods  
+            for period in [9, 13, 21]:
+                result = finta_TA.EFI(finta_df, period=period)
+                if len(result) == len(df):
+                    df[f'finta_EFI_{period}'] = result.values
+                else:
+                    padded_result = np.full(len(df), np.nan)
+                    min_len = min(len(result), len(df))
+                    padded_result[-min_len:] = result.values[-min_len:]
+                    df[f'finta_EFI_{period}'] = padded_result
+        except Exception as e:
+            print(f"FINTA EFI variations failed: {e}")
+        
+        try:
+            # VORTEX with different periods
+            for period in [10, 14, 21]:
+                result = finta_TA.VORTEX(finta_df, period=period)
+                if isinstance(result, pd.DataFrame):
+                    for col in result.columns:
+                        if len(result) == len(df):
+                            df[f'finta_VORTEX_{period}_{col}'] = result[col].values
+                        else:
+                            padded_result = np.full(len(df), np.nan)
+                            min_len = min(len(result), len(df))
+                            padded_result[-min_len:] = result[col].values[-min_len:]
+                            df[f'finta_VORTEX_{period}_{col}'] = padded_result
+        except Exception as e:
+            print(f"FINTA VORTEX variations failed: {e}")
+    
+    if not stock_indicators_available:
+        # Fallback to manual Hurst Exponent calculation
+        def calculate_hurst_exponent(prices, period=100):
+            hurst_values = []
+            
+            for i in range(period, len(prices)):
+                ts = prices.iloc[i-period:i].values
+                
+                lags = range(2, min(period//2, 20))
+                tau = []
+                
+                for lag in lags:
+                    chunks = [ts[j:j+lag] for j in range(0, len(ts), lag)]
+                    chunks = [chunk for chunk in chunks if len(chunk) == lag]
+                    
+                    if not chunks:
+                        continue
+                    
+                    rs_values = []
+                    for chunk in chunks:
+                        mean_chunk = np.mean(chunk)
+                        deviations = chunk - mean_chunk
+                        Z = np.cumsum(deviations)
+                        R = np.max(Z) - np.min(Z)
+                        S = np.std(chunk, ddof=1)
+                        
+                        if S != 0:
+                            rs_values.append(R / S)
+                    
+                    if rs_values:
+                        tau.append(np.mean(rs_values))
+                
+                if len(tau) > 1:
+                    log_lags = np.log(list(lags)[:len(tau)])
+                    log_tau = np.log(tau)
+                    hurst = np.polyfit(log_lags, log_tau, 1)[0]
+                    hurst_values.append(hurst)
+                else:
+                    hurst_values.append(0.5)
+            
+            hurst_values = [0.5] * period + hurst_values
+            return hurst_values
+        
+        df['manual_hurst_100'] = calculate_hurst_exponent(df['Close'], 100)
+        df['manual_hurst_200'] = calculate_hurst_exponent(df['Close'], 200)
+    
+    # ==================== CUSTOM PRICE STATISTICS (KEEP - MORE COMPREHENSIVE) ====================
+    # These are more detailed than standard library implementations
     for window in [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 24, 30, 36, 42, 48, 50, 60, 72, 84, 96, 100, 120, 144, 168, 200]:
         df[f'price_mean_{window}'] = df['Close'].rolling(window=window, min_periods=1).mean()
         df[f'price_std_{window}'] = df['Close'].rolling(window=window, min_periods=1).std()
@@ -1223,64 +1626,8 @@ def create_robust_features(data):
         df[f'price_quantile_75_{window}'] = df['Close'].rolling(window=window, min_periods=1).quantile(0.75)
         df[f'price_iqr_{window}'] = df[f'price_quantile_75_{window}'] - df[f'price_quantile_25_{window}']
     
-    # Custom Weighted Moving Average (only if not in TA-Lib)
-    if not talib_available:
-        def calculate_wma(prices, window):
-            weights = np.arange(1, window + 1)
-            wma = prices.rolling(window=window, min_periods=1).apply(
-                lambda x: np.dot(x, weights[-len(x):]) / weights[-len(x):].sum() if len(x) > 0 else x.mean()
-            )
-            return wma
-        
-        for window in [10, 20, 30]:
-            df[f'custom_WMA_{window}'] = calculate_wma(df['Close'], window)
-    
-    # Fractal Adaptive Moving Average (FRAMA)
-    def calculate_frama(prices, period=16):
-        def fractal_dimension(data):
-            n = len(data)
-            if n < 2:
-                return 1.5
-            
-            max_val = np.max(data)
-            min_val = np.min(data)
-            
-            if max_val == min_val:
-                return 1.5
-                
-            hl = (max_val - min_val) / n
-            
-            return 2 - np.log(hl) / np.log(2)
-        
-        frama = prices.copy()
-        
-        for i in range(period, len(prices)):
-            window = prices.iloc[i-period:i]
-            fd = fractal_dimension(window.values)
-            alpha = np.exp(-4.6 * (fd - 1))
-            
-            frama.iloc[i] = alpha * prices.iloc[i] + (1 - alpha) * frama.iloc[i-1]
-        
-        return frama
-    
-    df['FRAMA_16'] = calculate_frama(df['Close'])
-    
-    # Custom Advanced Volume Features
-    # Volume Weighted Average Price (VWAP) - Multiple Periods
-    if not pandas_ta_available:
-        cumulative_pv = (df['Volume'] * df['typical_price']).cumsum()
-        cumulative_volume = df['Volume'].cumsum()
-        df['custom_VWAP'] = cumulative_pv / cumulative_volume.replace(0, np.nan)
-    
-    # Rolling VWAP
-    for period in [5, 10, 20, 30, 50, 100, 200]:
-        rolling_pv = (df['Volume'] * df['typical_price']).rolling(window=period, min_periods=1).sum()
-        rolling_volume = df['Volume'].rolling(window=period, min_periods=1).sum()
-        df[f'custom_VWAP_{period}'] = rolling_pv / rolling_volume.replace(0, np.nan)
-        df[f'custom_VWAP_{period}_ratio'] = df['Close'] / df[f'custom_VWAP_{period}'].replace(0, np.nan)
-        df[f'custom_VWAP_{period}_distance'] = df['Close'] - df[f'custom_VWAP_{period}']
-    
-    # Custom Keltner Channels
+    # ==================== CUSTOM KELTNER CHANNELS (OPTIONAL - IF PANDAS-TA VERSION ISN'T SUFFICIENT) ====================
+    # Note: You already have pandas-ta Keltner Channels, but keeping this for custom multipliers/periods
     def calculate_atr_custom(df, period):
         high_low = df['High'] - df['Low']
         high_close = np.abs(df['High'] - df['Close'].shift())
@@ -1298,8 +1645,9 @@ def create_robust_features(data):
         
         return ema, upper, lower
     
-    for ema_period in [10, 20, 30, 50]:
-        for multiplier in [1, 1.5, 2, 2.5, 3]:
+    # Only add custom KC if you need specific combinations not in pandas-ta
+    for ema_period in [10, 50]:  # Reduced from original to avoid duplication
+        for multiplier in [1.5, 2.5, 3]:  # Only unique multipliers
             kc_ema, kc_upper, kc_lower = calculate_keltner_channels(df, ema_period=ema_period, multiplier=multiplier)
             df[f'custom_KC_middle_{ema_period}_{multiplier}'] = kc_ema
             df[f'custom_KC_upper_{ema_period}_{multiplier}'] = kc_upper
@@ -1307,29 +1655,7 @@ def create_robust_features(data):
             df[f'custom_KC_width_{ema_period}_{multiplier}'] = kc_upper - kc_lower
             df[f'custom_KC_position_{ema_period}_{multiplier}'] = (df['Close'] - kc_lower) / (kc_upper - kc_lower).replace(0, np.nan)
     
-    # Pivot Points (All Variations)
-    def calculate_pivot_points(df):
-        pivot = (df['High'].shift(1) + df['Low'].shift(1) + df['Close'].shift(1)) / 3
-        
-        r1 = 2 * pivot - df['Low'].shift(1)
-        s1 = 2 * pivot - df['High'].shift(1)
-        r2 = pivot + (df['High'].shift(1) - df['Low'].shift(1))
-        s2 = pivot - (df['High'].shift(1) - df['Low'].shift(1))
-        r3 = df['High'].shift(1) + 2 * (pivot - df['Low'].shift(1))
-        s3 = df['Low'].shift(1) - 2 * (df['High'].shift(1) - pivot)
-        
-        return pivot, r1, s1, r2, s2, r3, s3
-    
-    pivot, r1, s1, r2, s2, r3, s3 = calculate_pivot_points(df)
-    df['pivot_point'] = pivot
-    df['pivot_r1'] = r1
-    df['pivot_s1'] = s1
-    df['pivot_r2'] = r2
-    df['pivot_s2'] = s2
-    df['pivot_r3'] = r3
-    df['pivot_s3'] = s3
-    
-    # Fibonacci Retracement Levels
+    # ==================== FIBONACCI RETRACEMENT LEVELS (KEEP - CUSTOM MULTI-PERIOD) ====================
     def calculate_fib_levels(df, period=50):
         high = df['High'].rolling(window=period, min_periods=1).max()
         low = df['Low'].rolling(window=period, min_periods=1).min()
@@ -1353,9 +1679,9 @@ def create_robust_features(data):
             df[f'fib_{level}_{period}'] = values
             df[f'fib_{level}_{period}_distance'] = df['Close'] - values
     
-    # Smart Money Concepts (Enhanced)
+    # ==================== SMART MONEY CONCEPTS (KEEP - HIGHLY SPECIALIZED) ====================
     def enhanced_smc_analysis(df):
-        """Advanced Smart Money Concepts"""
+        """Advanced Smart Money Concepts - Not available in standard libraries"""
         
         # Market Structure Analysis
         swing_lookback = 10
@@ -1404,9 +1730,9 @@ def create_robust_features(data):
     for name, values in smc_features.items():
         df[name] = values
     
-    # Order Flow Analysis
+    # ==================== ORDER FLOW ANALYSIS (KEEP - HIGHLY SPECIALIZED) ====================
     def enhanced_order_flow_analysis(df):
-        """Advanced Order Flow metrics"""
+        """Advanced Order Flow metrics - Not available in standard libraries"""
         
         price_move = df['Close'] - df['Open']
         typical_range = (df['High'] - df['Low']).rolling(20).mean()
@@ -1433,50 +1759,6 @@ def create_robust_features(data):
     order_flow_features = enhanced_order_flow_analysis(df)
     for name, values in order_flow_features.items():
         df[name] = values
-    
-    # Hurst Exponent
-    def calculate_hurst_exponent(prices, period=100):
-        hurst_values = []
-        
-        for i in range(period, len(prices)):
-            ts = prices.iloc[i-period:i].values
-            
-            lags = range(2, min(period//2, 20))
-            tau = []
-            
-            for lag in lags:
-                chunks = [ts[j:j+lag] for j in range(0, len(ts), lag)]
-                chunks = [chunk for chunk in chunks if len(chunk) == lag]
-                
-                if not chunks:
-                    continue
-                
-                rs_values = []
-                for chunk in chunks:
-                    mean_chunk = np.mean(chunk)
-                    deviations = chunk - mean_chunk
-                    Z = np.cumsum(deviations)
-                    R = np.max(Z) - np.min(Z)
-                    S = np.std(chunk, ddof=1)
-                    
-                    if S != 0:
-                        rs_values.append(R / S)
-                
-                if rs_values:
-                    tau.append(np.mean(rs_values))
-            
-            if len(tau) > 1:
-                log_lags = np.log(list(lags)[:len(tau)])
-                log_tau = np.log(tau)
-                hurst = np.polyfit(log_lags, log_tau, 1)[0]
-                hurst_values.append(hurst)
-            else:
-                hurst_values.append(0.5)
-        
-        hurst_values = [0.5] * period + hurst_values
-        return hurst_values
-    
-    df['hurst_exponent'] = calculate_hurst_exponent(df['Close'])
     
     # Historical Volatility
     for period in [10, 20, 30, 50, 100]:
